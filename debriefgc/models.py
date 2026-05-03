@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, date
+from datetime import timedelta
 from typing import Any
 
 
@@ -12,6 +13,25 @@ class ChatMessage:
     sender_name: str
     text: str
     is_from_me: bool
+
+
+@dataclass(frozen=True)
+class ChatCommandMessage:
+    rowid: int
+    chat_identifier: str
+    chat_display_name: str
+    sent_at: datetime
+    sender_handle: str
+    sender_name: str
+    text: str
+    is_from_me: bool
+
+
+@dataclass(frozen=True)
+class ParsedCommand:
+    name: str
+    raw_text: str
+    window: timedelta | None = None
 
 
 @dataclass(frozen=True)

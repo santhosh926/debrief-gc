@@ -31,3 +31,12 @@ timezone = "America/New_York"
 [sending]
 mode = "dry-run"
 service = "iMessage"
+
+[commands]
+enabled = true
+mention = "@debrief"
+poll_lookback_minutes = 10
+default_summary_hours = 6
+
+# Optional. If omitted, DebriefGC watches [group].chat_identifier.
+chat_identifiers = []

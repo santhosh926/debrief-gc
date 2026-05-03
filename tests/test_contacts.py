@@ -113,6 +113,43 @@ enabled = false
 
             self.assertFalse(config.contacts_enabled)
 
+    def test_load_config_defaults_command_settings(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            config_path = Path(tmp_dir) / "config.toml"
+            config_path.write_text(
+                """
+[group]
+chat_identifier = "chat-test"
+""",
+                encoding="utf-8",
+            )
+
+            config = load_config(config_path)
+
+            self.assertTrue(config.commands_enabled)
+            self.assertEqual(config.command_mention, "@debrief")
+            self.assertEqual(config.command_poll_lookback_minutes, 10)
+            self.assertEqual(config.command_default_summary_hours, 6)
+            self.assertEqual(config.command_chat_identifiers, ())
+
+    def test_load_config_reads_command_chat_identifiers(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            config_path = Path(tmp_dir) / "config.toml"
+            config_path.write_text(
+                """
+[group]
+chat_identifier = "chat-test"
+
+[commands]
+chat_identifiers = ["chat-one", "chat-two"]
+""",
+                encoding="utf-8",
+            )
+
+            config = load_config(config_path)
+
+            self.assertEqual(config.command_chat_identifiers, ("chat-one", "chat-two"))
+
     def test_openai_placeholder_is_not_treated_as_configured_key(self):
         self.assertIsNone(normalize_openai_api_key("sk-your-openai-api-key-here"))
         self.assertEqual(normalize_openai_api_key("sk-real"), "sk-real")

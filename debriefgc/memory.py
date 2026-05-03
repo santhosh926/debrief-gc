@@ -29,6 +29,19 @@ CREATE TABLE IF NOT EXISTS daily_summaries (
 
 CREATE INDEX IF NOT EXISTS idx_daily_summaries_chat_date
 ON daily_summaries(chat_identifier, summary_date DESC);
+
+CREATE TABLE IF NOT EXISTS processed_commands (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  chat_identifier TEXT NOT NULL,
+  message_rowid INTEGER NOT NULL,
+  command_text TEXT NOT NULL,
+  response_text TEXT NOT NULL,
+  processed_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE(chat_identifier, message_rowid)
+);
+
+CREATE INDEX IF NOT EXISTS idx_processed_commands_chat_message
+ON processed_commands(chat_identifier, message_rowid);
 """
 
 
@@ -115,6 +128,41 @@ class MemoryStore:
                 (chat_identifier, cutoff.isoformat()),
             )
             return cursor.rowcount
+
+    def has_processed_command(self, chat_identifier: str, message_rowid: int) -> bool:
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                SELECT 1
+                FROM processed_commands
+                WHERE chat_identifier = ?
+                  AND message_rowid = ?
+                LIMIT 1
+                """,
+                (chat_identifier, message_rowid),
+            ).fetchone()
+        return row is not None
+
+    def mark_command_processed(
+        self,
+        chat_identifier: str,
+        message_rowid: int,
+        command_text: str,
+        response_text: str,
+    ) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO processed_commands (
+                  chat_identifier, message_rowid, command_text, response_text
+                ) VALUES (?, ?, ?, ?)
+                ON CONFLICT(chat_identifier, message_rowid) DO UPDATE SET
+                  command_text = excluded.command_text,
+                  response_text = excluded.response_text,
+                  processed_at = CURRENT_TIMESTAMP
+                """,
+                (chat_identifier, message_rowid, command_text, response_text),
+            )
 
 
 def summary_from_row(row: sqlite3.Row) -> DailySummary:
