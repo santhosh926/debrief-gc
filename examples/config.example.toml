@@ -1,0 +1,33 @@
+# DebriefGC local config example.
+# Copy to ~/.config/debriefgc/config.toml or run: debriefgc init-config
+
+[group]
+chat_identifier = "chat1234567890"
+display_name = "The Group Chat"
+
+[group.participant_names]
+"+15555550123" = "Avery"
+"friend@example.com" = "Jordan"
+"me" = "Me"
+
+[contacts]
+# Uses the local macOS Contacts app to resolve phone numbers/emails to first names.
+enabled = true
+
+[ai]
+model = "gpt-4.1-mini"
+max_messages_chars = 90000
+max_memory_days = 90
+
+[storage]
+memory_db_path = "~/.local/share/debriefgc/memory.sqlite3"
+messages_db_path = "~/Library/Messages/chat.db"
+retention_days = 90
+
+[runtime]
+dry_run = true
+timezone = "America/New_York"
+
+[sending]
+mode = "dry-run"
+service = "iMessage"
