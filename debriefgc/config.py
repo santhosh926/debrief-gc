@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import timedelta
 from pathlib import Path
 import os
 import tomllib
@@ -34,6 +35,7 @@ class Config:
     command_retry_cooldown_minutes: int = 5
     command_invocation_cooldown_minutes: int = 10
     command_default_summary_hours: int = 6
+    command_max_lookback_days: int = 7
     command_chat_identifiers: tuple[str, ...] = ()
 
 
@@ -81,6 +83,16 @@ def load_config(path: Path = DEFAULT_CONFIG_PATH) -> Config:
     command_default_summary_hours = int(commands.get("default_summary_hours", 6))
     if command_default_summary_hours < 1:
         raise ValueError("Config [commands].default_summary_hours must be at least 1.")
+    command_max_lookback_days = int(commands.get("max_lookback_days", 7))
+    if command_max_lookback_days < 1:
+        raise ValueError("Config [commands].max_lookback_days must be at least 1.")
+    if timedelta(hours=command_default_summary_hours) > timedelta(
+        days=command_max_lookback_days
+    ):
+        raise ValueError(
+            "Config [commands].default_summary_hours cannot exceed "
+            "[commands].max_lookback_days."
+        )
 
     return Config(
         chat_identifier=chat_identifier,
@@ -112,6 +124,7 @@ def load_config(path: Path = DEFAULT_CONFIG_PATH) -> Config:
         command_retry_cooldown_minutes=command_retry_cooldown_minutes,
         command_invocation_cooldown_minutes=command_invocation_cooldown_minutes,
         command_default_summary_hours=command_default_summary_hours,
+        command_max_lookback_days=command_max_lookback_days,
         command_chat_identifiers=tuple(
             str(item).strip()
             for item in commands.get("chat_identifiers", [])
@@ -177,6 +190,7 @@ poll_lookback_minutes = 360
 retry_cooldown_minutes = 5
 invocation_cooldown_minutes = 10
 default_summary_hours = 6
+max_lookback_days = 7
 
 # Optional. If omitted, DebriefGC watches [group].chat_identifier.
 chat_identifiers = []

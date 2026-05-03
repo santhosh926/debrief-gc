@@ -36,6 +36,18 @@ class CommandTests(unittest.TestCase):
 
         self.assertEqual(parsed.window, timedelta(hours=12))
 
+    def test_parse_allows_seven_day_window(self):
+        parsed = parse_chat_command("@debrief summarize last 7 days")
+
+        self.assertEqual(parsed.window, timedelta(days=7))
+
+    def test_parse_rejects_windows_over_max_lookback(self):
+        with self.assertRaisesRegex(ValueError, "cannot be more than 7 days"):
+            parse_chat_command("@debrief summarize last 8 days")
+
+        with self.assertRaisesRegex(ValueError, "cannot be more than 7 days"):
+            parse_chat_command("@debrief summarize last 169 hours")
+
     def test_parse_rejects_unsupported_command(self):
         with self.assertRaisesRegex(ValueError, "Unsupported command"):
             parse_chat_command("@debrief roast everyone")
@@ -69,6 +81,34 @@ class CommandTests(unittest.TestCase):
             response,
         )
         self.assertIn("@debrief summarize last 45 minutes", response)
+
+    def test_invalid_command_response_explains_max_lookback(self):
+        command_message = ChatCommandMessage(
+            rowid=123,
+            chat_identifier="chat-test",
+            chat_display_name="Test Chat",
+            sent_at=datetime(2026, 5, 3, 12, 0),
+            sender_handle="me",
+            sender_name="Me",
+            text="@debrief summarize last 8 days",
+            is_from_me=True,
+        )
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            config = Config(
+                chat_identifier="chat-test",
+                chat_display_name="Test Chat",
+                participant_names={},
+                memory_db_path=Path(tmp_dir) / "memory.sqlite3",
+                dry_run=True,
+                command_max_lookback_days=7,
+            )
+            store = MemoryStore(config.memory_db_path)
+
+            with patch("debriefgc.commands.fetch_messages_between") as fetch_mock:
+                response = build_command_response(config, store, command_message)
+
+        self.assertIn("Summary window cannot be more than 7 days.", response)
+        fetch_mock.assert_not_called()
 
     def test_summarize_response_respects_invocation_cooldown(self):
         command_message = ChatCommandMessage(

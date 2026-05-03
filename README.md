@@ -159,6 +159,7 @@ poll_lookback_minutes = 360
 retry_cooldown_minutes = 5
 invocation_cooldown_minutes = 10
 default_summary_hours = 6
+max_lookback_days = 7
 
 # Optional. If omitted, DebriefGC watches [group].chat_identifier.
 chat_identifiers = ["Spocks"]
@@ -186,7 +187,8 @@ Processed command message IDs are saved in the local memory database so a
 scheduled poll does not answer the same command twice. Failed command attempts
 are also tracked and retried after the configured retry cooldown. Successful
 summary commands are limited by `invocation_cooldown_minutes`; early attempts
-receive a try-again-later reply instead of generating another summary.
+receive a try-again-later reply instead of generating another summary. Requested
+summary windows cannot exceed `max_lookback_days`.
 
 ## Daily 11:59pm Schedule
 

@@ -39,6 +39,7 @@ poll_lookback_minutes = 360
 retry_cooldown_minutes = 5
 invocation_cooldown_minutes = 10
 default_summary_hours = 6
+max_lookback_days = 7
 
 # Optional. If omitted, DebriefGC watches [group].chat_identifier.
 chat_identifiers = []

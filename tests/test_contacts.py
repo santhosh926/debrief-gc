@@ -132,7 +132,26 @@ chat_identifier = "chat-test"
             self.assertEqual(config.command_retry_cooldown_minutes, 5)
             self.assertEqual(config.command_invocation_cooldown_minutes, 10)
             self.assertEqual(config.command_default_summary_hours, 6)
+            self.assertEqual(config.command_max_lookback_days, 7)
             self.assertEqual(config.command_chat_identifiers, ())
+
+    def test_load_config_rejects_default_window_over_max_lookback(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            config_path = Path(tmp_dir) / "config.toml"
+            config_path.write_text(
+                """
+[group]
+chat_identifier = "chat-test"
+
+[commands]
+default_summary_hours = 200
+max_lookback_days = 7
+""",
+                encoding="utf-8",
+            )
+
+            with self.assertRaisesRegex(ValueError, "default_summary_hours"):
+                load_config(config_path)
 
     def test_load_config_reads_command_chat_identifiers(self):
         with tempfile.TemporaryDirectory() as tmp_dir:

@@ -36,6 +36,7 @@ def parse_chat_command(
     text: str,
     mention: str = "@debrief",
     default_summary_hours: int = 6,
+    max_lookback_days: int = 7,
 ) -> ParsedCommand:
     stripped = text.strip()
     if not starts_with_mention(stripped, mention):
@@ -50,14 +51,24 @@ def parse_chat_command(
     if command_name != "summarize":
         raise ValueError(f'Unsupported command "{parts[0]}".')
 
-    window = parse_summary_window(command_text, default_summary_hours)
+    window = parse_summary_window(
+        command_text,
+        default_summary_hours,
+        max_lookback_days,
+    )
     return ParsedCommand(name=command_name, raw_text=command_text, window=window)
 
 
-def parse_summary_window(command_text: str, default_summary_hours: int = 6) -> timedelta:
+def parse_summary_window(
+    command_text: str,
+    default_summary_hours: int = 6,
+    max_lookback_days: int = 7,
+) -> timedelta:
     match = WINDOW_RE.search(command_text)
     if match is None:
-        return timedelta(hours=default_summary_hours)
+        return validate_summary_window(
+            timedelta(hours=default_summary_hours), max_lookback_days
+        )
 
     amount = int(match.group(1))
     if amount < 1:
@@ -65,12 +76,20 @@ def parse_summary_window(command_text: str, default_summary_hours: int = 6) -> t
 
     unit = match.group(2).lower()
     if unit.startswith(("minute", "min")):
-        return timedelta(minutes=amount)
+        return validate_summary_window(timedelta(minutes=amount), max_lookback_days)
     if unit.startswith(("hour", "hr")):
-        return timedelta(hours=amount)
+        return validate_summary_window(timedelta(hours=amount), max_lookback_days)
     if unit.startswith("day"):
-        return timedelta(days=amount)
+        return validate_summary_window(timedelta(days=amount), max_lookback_days)
     raise ValueError(f"Unsupported summary window unit: {unit}")
+
+
+def validate_summary_window(window: timedelta, max_lookback_days: int) -> timedelta:
+    if window > timedelta(days=max_lookback_days):
+        raise ValueError(
+            f"Summary window cannot be more than {max_lookback_days} days."
+        )
+    return window
 
 
 def starts_with_mention(text: str, mention: str) -> bool:
@@ -175,6 +194,7 @@ def build_command_response(
             command_message.text,
             mention=config.command_mention,
             default_summary_hours=config.command_default_summary_hours,
+            max_lookback_days=config.command_max_lookback_days,
         )
     except ValueError as exc:
         return invalid_command_message(config.command_mention, str(exc))
