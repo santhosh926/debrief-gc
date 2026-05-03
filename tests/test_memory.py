@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime, timedelta, timezone
 import tempfile
 from pathlib import Path
 import unittest
@@ -63,6 +63,34 @@ class MemoryTests(unittest.TestCase):
 
             self.assertTrue(store.has_processed_command("chat-test", 123))
             self.assertFalse(store.has_processed_command("chat-other", 123))
+
+    def test_command_cooldown_ignores_cooldown_responses(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            store = MemoryStore(Path(tmp_dir) / "memory.sqlite3")
+            store.mark_command_processed(
+                "chat-test",
+                123,
+                "@debrief summarize the past 6 hours of this chat",
+                "summary response",
+                datetime(2026, 5, 3, 12, 0, tzinfo=timezone.utc),
+            )
+            store.mark_command_processed(
+                "chat-test",
+                124,
+                "@debrief summarize the past 6 hours of this chat",
+                "DebriefGC can only summarize this chat once every 10 minutes.",
+                datetime(2026, 5, 3, 12, 5, tzinfo=timezone.utc),
+            )
+
+            remaining = store.command_cooldown_remaining(
+                "chat-test",
+                "@debrief summarize",
+                ("DebriefGC can only summarize this chat once every ",),
+                timedelta(minutes=10),
+                datetime(2026, 5, 3, 12, 9, tzinfo=timezone.utc),
+            )
+
+        self.assertEqual(remaining, timedelta(minutes=1))
 
 
 if __name__ == "__main__":

@@ -128,7 +128,9 @@ chat_identifier = "chat-test"
 
             self.assertTrue(config.commands_enabled)
             self.assertEqual(config.command_mention, "@debrief")
-            self.assertEqual(config.command_poll_lookback_minutes, 10)
+            self.assertEqual(config.command_poll_lookback_minutes, 360)
+            self.assertEqual(config.command_retry_cooldown_minutes, 5)
+            self.assertEqual(config.command_invocation_cooldown_minutes, 10)
             self.assertEqual(config.command_default_summary_hours, 6)
             self.assertEqual(config.command_chat_identifiers, ())
 
