@@ -54,6 +54,16 @@ class MemoryTests(unittest.TestCase):
         self.assertIn("The One With Tests", lore)
         self.assertIn("The One With Tests bit", lore)
 
+    def test_processed_commands_are_deduped_by_chat_and_message(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            store = MemoryStore(Path(tmp_dir) / "memory.sqlite3")
+
+            self.assertFalse(store.has_processed_command("chat-test", 123))
+            store.mark_command_processed("chat-test", 123, "@debrief summarize", "ok")
+
+            self.assertTrue(store.has_processed_command("chat-test", 123))
+            self.assertFalse(store.has_processed_command("chat-other", 123))
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -24,6 +24,7 @@ group chat.
   - memory-based recurring bits
   - one friend-group roast with guardrails
 - Runs manually or on a daily `launchd` schedule.
+- Can poll configured chats for `@debrief` commands and reply in-chat.
 
 ## Setup
 
@@ -145,6 +146,43 @@ The first run may trigger macOS Automation permissions. If Messages automation
 cannot address the group chat by the configured identifier, keep `mode =
 "dry-run"` and use the printed text until the chat identifier is corrected.
 
+## Chat Commands
+
+DebriefGC can also check configured chats for command messages and reply with an
+ad hoc summary. This is separate from the existing `debriefgc run` daily recap.
+
+```toml
+[commands]
+enabled = true
+mention = "@debrief"
+poll_lookback_minutes = 10
+default_summary_hours = 6
+
+# Optional. If omitted, DebriefGC watches [group].chat_identifier.
+chat_identifiers = ["Spocks"]
+```
+
+In the chat, send:
+
+```text
+@debrief summarize the past 6 hours of this chat
+```
+
+Then poll once:
+
+```bash
+debriefgc poll-commands --dry-run
+```
+
+Use `--send` to post the reply through Messages automation:
+
+```bash
+debriefgc poll-commands --send
+```
+
+Processed command message IDs are saved in the local memory database so a
+scheduled poll does not answer the same command twice.
+
 ## Daily 11:59pm Schedule
 
 Generate a launchd plist:
@@ -155,6 +193,12 @@ launchctl load ~/Library/LaunchAgents/com.local.debriefgc.plist
 ```
 
 Logs go to `~/Library/Logs/debriefgc` by default.
+
+## Command Polling Schedule
+
+For chat commands, schedule `debriefgc poll-commands --send` with launchd at a
+short interval, such as every minute. Keep the daily `debriefgc run` schedule if
+you also want the end-of-day recap.
 
 ## Privacy Notes
 

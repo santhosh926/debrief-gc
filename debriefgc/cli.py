@@ -7,6 +7,7 @@ from zoneinfo import ZoneInfo
 
 from .config import DEFAULT_CONFIG_PATH, load_config, sample_config
 from .contacts import ContactsLookupError, load_contact_names
+from .commands import poll_chat_commands
 from .llm import generate_summary
 from .memory import MemoryStore
 from .messages import fetch_daily_messages, fetch_messages_between, list_chats
@@ -36,6 +37,10 @@ def main(argv: list[str] | None = None) -> int:
     )
     run_parser.add_argument("--send", action="store_true", help="Override dry_run for this run")
     run_parser.add_argument("--dry-run", action="store_true", help="Print only")
+
+    poll_parser = subparsers.add_parser("poll-commands")
+    poll_parser.add_argument("--send", action="store_true", help="Override dry_run for this poll")
+    poll_parser.add_argument("--dry-run", action="store_true", help="Print only")
 
     launchd_parser = subparsers.add_parser("print-launchd-plist")
     launchd_parser.add_argument("--label", default="com.local.debriefgc")
@@ -70,6 +75,23 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "print-launchd-plist":
         args.log_dir.mkdir(parents=True, exist_ok=True)
         print(launchd_plist(args.label, args.config.expanduser(), args.log_dir))
+        return 0
+
+    if args.command == "poll-commands":
+        if args.send and args.dry_run:
+            raise SystemExit("Use either --send or --dry-run, not both.")
+        if args.send:
+            object.__setattr__(config, "dry_run", False)
+            object.__setattr__(config, "send_mode", "messages")
+        if args.dry_run:
+            object.__setattr__(config, "dry_run", True)
+            object.__setattr__(config, "send_mode", "dry-run")
+
+        result = poll_chat_commands(config)
+        print(
+            f"Command poll complete. Seen {result.seen}, processed "
+            f"{result.processed}, skipped {result.skipped}."
+        )
         return 0
 
     if args.command == "run":

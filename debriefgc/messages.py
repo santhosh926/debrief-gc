@@ -1,12 +1,13 @@
 from __future__ import annotations
 
+from collections.abc import Sequence
 from datetime import date, datetime, time, timezone
 from pathlib import Path
 import sqlite3
 
 from .config import Config
 from .contacts import ContactsLookupError, load_contact_names, resolve_sender_name
-from .models import ChatInfo, ChatMessage
+from .models import ChatCommandMessage, ChatInfo, ChatMessage
 
 APPLE_EPOCH_OFFSET_SECONDS = 978_307_200
 
@@ -172,7 +173,10 @@ def fetch_daily_messages(
 
 
 def fetch_messages_between(
-    config: Config, start: datetime, end: datetime
+    config: Config,
+    start: datetime,
+    end: datetime,
+    exclude_message_rowids: Sequence[int] = (),
 ) -> list[ChatMessage]:
     if start.tzinfo is None:
         start = start.astimezone()
@@ -200,6 +204,13 @@ def fetch_messages_between(
                 f"Could not find chat '{config.chat_identifier}'. Run `debriefgc list-chats`."
             )
 
+        exclude_clause = ""
+        exclude_params: list[object] = []
+        if exclude_message_rowids:
+            placeholders = ", ".join("?" for _ in exclude_message_rowids)
+            exclude_clause = f"AND message.ROWID NOT IN ({placeholders})"
+            exclude_params.extend(int(rowid) for rowid in exclude_message_rowids)
+
         rows = conn.execute(
             """
             SELECT
@@ -215,9 +226,10 @@ def fetch_messages_between(
               AND message.date <= ?
               AND message.text IS NOT NULL
               AND TRIM(message.text) != ''
+              {exclude_clause}
             ORDER BY message.date ASC
-            """,
-            (chat_row["ROWID"], start_ns, end_ns),
+            """.format(exclude_clause=exclude_clause),
+            (chat_row["ROWID"], start_ns, end_ns, *exclude_params),
         ).fetchall()
 
     messages: list[ChatMessage] = []
@@ -241,6 +253,94 @@ def fetch_messages_between(
             )
         )
     return messages
+
+
+def fetch_recent_command_messages(
+    config: Config,
+    chat_identifiers: Sequence[str],
+    since: datetime,
+    mention: str,
+) -> list[ChatCommandMessage]:
+    if since.tzinfo is None:
+        since = since.astimezone()
+    since_ns = datetime_to_apple_nanoseconds(since)
+    command_messages: list[ChatCommandMessage] = []
+    try:
+        contact_names = load_contact_names(config)
+    except ContactsLookupError:
+        contact_names = {}
+
+    with connect_messages_db(config.messages_db_path) as conn:
+        for chat_identifier in chat_identifiers:
+            chat_row = conn.execute(
+                """
+                SELECT ROWID, guid, COALESCE(display_name, '') AS display_name,
+                       COALESCE(chat_identifier, '') AS chat_identifier
+                FROM chat
+                WHERE guid = ? OR chat_identifier = ? OR display_name = ?
+                ORDER BY ROWID DESC
+                LIMIT 1
+                """,
+                (chat_identifier, chat_identifier, chat_identifier),
+            ).fetchone()
+            if chat_row is None:
+                continue
+
+            rows = conn.execute(
+                """
+                SELECT
+                  message.ROWID AS rowid,
+                  message.date,
+                  COALESCE(handle.id, 'me') AS sender_handle,
+                  message.is_from_me,
+                  message.text
+                FROM message
+                JOIN chat_message_join ON chat_message_join.message_id = message.ROWID
+                LEFT JOIN handle ON handle.ROWID = message.handle_id
+                WHERE chat_message_join.chat_id = ?
+                  AND message.date >= ?
+                  AND message.text IS NOT NULL
+                  AND TRIM(message.text) != ''
+                ORDER BY message.date ASC
+                """,
+                (chat_row["ROWID"], since_ns),
+            ).fetchall()
+
+            resolved_chat_identifier = (
+                chat_row["chat_identifier"] or chat_row["guid"] or chat_identifier
+            )
+            display_name = chat_row["display_name"] or resolved_chat_identifier
+            for row in rows:
+                text = str(row["text"])
+                if not starts_with_mention(text, mention):
+                    continue
+                sent_at = apple_time_to_datetime(row["date"])
+                if sent_at is None:
+                    continue
+                sender_handle = "me" if row["is_from_me"] else row["sender_handle"]
+                sender_name = resolve_sender_name(sender_handle, config, contact_names)
+                command_messages.append(
+                    ChatCommandMessage(
+                        rowid=int(row["rowid"]),
+                        chat_identifier=resolved_chat_identifier,
+                        chat_display_name=display_name,
+                        sent_at=sent_at,
+                        sender_handle=sender_handle,
+                        sender_name=sender_name,
+                        text=text,
+                        is_from_me=bool(row["is_from_me"]),
+                    )
+                )
+    return command_messages
+
+
+def starts_with_mention(text: str, mention: str) -> bool:
+    stripped = text.strip()
+    if not stripped.lower().startswith(mention.lower()):
+        return False
+    if len(stripped) == len(mention):
+        return True
+    return stripped[len(mention)].isspace()
 
 
 def format_messages_for_prompt(messages: list[ChatMessage], max_chars: int) -> str:
