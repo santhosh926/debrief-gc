@@ -214,18 +214,18 @@ def fetch_messages_between(
         rows = conn.execute(
             """
             SELECT
+              message.ROWID AS rowid,
               message.date,
               COALESCE(handle.id, 'me') AS sender_handle,
               message.is_from_me,
-              message.text
+              message.text,
+              message.attributedBody
             FROM message
             JOIN chat_message_join ON chat_message_join.message_id = message.ROWID
             LEFT JOIN handle ON handle.ROWID = message.handle_id
             WHERE chat_message_join.chat_id = ?
               AND message.date >= ?
               AND message.date <= ?
-              AND message.text IS NOT NULL
-              AND TRIM(message.text) != ''
               {exclude_clause}
             ORDER BY message.date ASC
             """.format(exclude_clause=exclude_clause),
@@ -238,6 +238,9 @@ def fetch_messages_between(
     except ContactsLookupError:
         contact_names = {}
     for row in rows:
+        text = message_text_from_row(row)
+        if not text:
+            continue
         sent_at = apple_time_to_datetime(row["date"])
         if sent_at is None:
             continue
@@ -248,7 +251,7 @@ def fetch_messages_between(
                 sent_at=sent_at,
                 sender_handle=sender_handle,
                 sender_name=sender_name,
-                text=row["text"],
+                text=text,
                 is_from_me=bool(row["is_from_me"]),
             )
         )
@@ -293,14 +296,13 @@ def fetch_recent_command_messages(
                   message.date,
                   COALESCE(handle.id, 'me') AS sender_handle,
                   message.is_from_me,
-                  message.text
+                  message.text,
+                  message.attributedBody
                 FROM message
                 JOIN chat_message_join ON chat_message_join.message_id = message.ROWID
                 LEFT JOIN handle ON handle.ROWID = message.handle_id
                 WHERE chat_message_join.chat_id = ?
                   AND message.date >= ?
-                  AND message.text IS NOT NULL
-                  AND TRIM(message.text) != ''
                 ORDER BY message.date ASC
                 """,
                 (chat_row["ROWID"], since_ns),
@@ -311,7 +313,7 @@ def fetch_recent_command_messages(
             )
             display_name = chat_row["display_name"] or resolved_chat_identifier
             for row in rows:
-                text = str(row["text"])
+                text = message_text_from_row(row)
                 if not starts_with_mention(text, mention):
                     continue
                 sent_at = apple_time_to_datetime(row["date"])
@@ -332,6 +334,36 @@ def fetch_recent_command_messages(
                     )
                 )
     return command_messages
+
+
+def message_text_from_row(row: sqlite3.Row) -> str:
+    text = row["text"]
+    if text is not None and str(text).strip():
+        return str(text)
+    return decode_attributed_body(row["attributedBody"])
+
+
+def decode_attributed_body(value: object) -> str:
+    if value is None:
+        return ""
+    data = bytes(value)
+    marker = b"NSString"
+    marker_index = data.find(marker)
+    if marker_index < 0:
+        return ""
+    text_marker = b"\x94\x84\x01+"
+    text_index = data.find(text_marker, marker_index)
+    if text_index < 0:
+        return ""
+    length_index = text_index + len(text_marker)
+    if length_index >= len(data):
+        return ""
+    length = data[length_index]
+    start = length_index + 1
+    end = start + length
+    if end > len(data):
+        return ""
+    return data[start:end].decode("utf-8", errors="replace").strip()
 
 
 def starts_with_mention(text: str, mention: str) -> bool:

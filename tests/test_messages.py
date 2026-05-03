@@ -6,6 +6,7 @@ import unittest
 from debriefgc.messages import (
     applescript_chat_id,
     apple_time_to_datetime,
+    decode_attributed_body,
     datetime_to_apple_nanoseconds,
 )
 
@@ -31,6 +32,19 @@ class MessagesTests(unittest.TestCase):
         self.assertEqual(
             applescript_chat_id("any;+;chat782401933118362511"),
             "any;+;chat782401933118362511",
+        )
+
+    def test_decode_attributed_body_extracts_string_payload(self):
+        body = (
+            b"prefix NSString"
+            b"\x01\x94\x84\x01+"
+            b"\x30@debrief summarize the past 6 hours of this chat"
+            b"suffix"
+        )
+
+        self.assertEqual(
+            decode_attributed_body(body),
+            "@debrief summarize the past 6 hours of this chat",
         )
 
 
