@@ -129,8 +129,27 @@ chat_identifier = "chat-test"
             self.assertTrue(config.commands_enabled)
             self.assertEqual(config.command_mention, "@debrief")
             self.assertEqual(config.command_poll_lookback_minutes, 10)
+            self.assertEqual(config.command_retry_cooldown_minutes, 10)
             self.assertEqual(config.command_default_summary_hours, 6)
             self.assertEqual(config.command_chat_identifiers, ())
+
+    def test_load_config_reads_command_retry_cooldown(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            config_path = Path(tmp_dir) / "config.toml"
+            config_path.write_text(
+                """
+[group]
+chat_identifier = "chat-test"
+
+[commands]
+retry_cooldown_minutes = 15
+""",
+                encoding="utf-8",
+            )
+
+            config = load_config(config_path)
+
+            self.assertEqual(config.command_retry_cooldown_minutes, 15)
 
     def test_load_config_reads_command_chat_identifiers(self):
         with tempfile.TemporaryDirectory() as tmp_dir:

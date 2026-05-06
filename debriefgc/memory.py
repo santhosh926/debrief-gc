@@ -1,9 +1,10 @@
 from __future__ import annotations
 
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from pathlib import Path
 import json
 import sqlite3
+from collections.abc import Sequence
 
 from .models import DailySummary
 
@@ -34,6 +35,7 @@ CREATE TABLE IF NOT EXISTS processed_commands (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   chat_identifier TEXT NOT NULL,
   message_rowid INTEGER NOT NULL,
+  command_sent_at TEXT,
   command_text TEXT NOT NULL,
   response_text TEXT NOT NULL,
   processed_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -59,6 +61,14 @@ class MemoryStore:
     def _ensure_schema(self) -> None:
         with self._connect() as conn:
             conn.executescript(SCHEMA)
+            columns = {
+                row["name"]
+                for row in conn.execute("PRAGMA table_info(processed_commands)")
+            }
+            if "command_sent_at" not in columns:
+                conn.execute(
+                    "ALTER TABLE processed_commands ADD COLUMN command_sent_at TEXT"
+                )
 
     def upsert_summary(self, summary: DailySummary) -> None:
         with self._connect() as conn:
@@ -143,25 +153,114 @@ class MemoryStore:
             ).fetchone()
         return row is not None
 
+    def has_recent_processed_command(
+        self,
+        chat_identifier: str,
+        before: datetime,
+        cooldown: timedelta,
+        ignored_response_prefix: str | None = None,
+        ignored_response_prefixes: Sequence[str] = (),
+    ) -> bool:
+        return (
+            self.recent_processed_command_at(
+                chat_identifier,
+                before,
+                cooldown,
+                ignored_response_prefix=ignored_response_prefix,
+                ignored_response_prefixes=ignored_response_prefixes,
+            )
+            is not None
+        )
+
+    def recent_processed_command_at(
+        self,
+        chat_identifier: str,
+        before: datetime,
+        cooldown: timedelta,
+        ignored_response_prefix: str | None = None,
+        ignored_response_prefixes: Sequence[str] = (),
+    ) -> datetime | None:
+        if cooldown <= timedelta(0):
+            return None
+
+        cutoff = before - cooldown
+        params: list[object] = [chat_identifier]
+        ignored_prefixes = list(ignored_response_prefixes)
+        if ignored_response_prefix is not None:
+            ignored_prefixes.append(ignored_response_prefix)
+        ignored_response_clause = " ".join(
+            "AND response_text NOT LIKE ?" for _ in ignored_prefixes
+        )
+        params.extend(f"{prefix}%" for prefix in ignored_prefixes)
+        params.extend(
+            [
+                cutoff.isoformat(),
+                before.isoformat(),
+                cutoff.isoformat(),
+                before.isoformat(),
+            ]
+        )
+
+        with self._connect() as conn:
+            row = conn.execute(
+                f"""
+                SELECT COALESCE(command_sent_at, processed_at) AS handled_at
+                FROM processed_commands
+                WHERE chat_identifier = ?
+                  {ignored_response_clause}
+                  AND (
+                    (
+                      command_sent_at IS NOT NULL
+                      AND datetime(command_sent_at) > datetime(?)
+                      AND datetime(command_sent_at) < datetime(?)
+                    )
+                    OR (
+                      command_sent_at IS NULL
+                      AND datetime(processed_at) > datetime(?)
+                      AND datetime(processed_at) < datetime(?)
+                    )
+                  )
+                ORDER BY datetime(COALESCE(command_sent_at, processed_at)) DESC
+                LIMIT 1
+                """,
+                params,
+            ).fetchone()
+        if row is None:
+            return None
+
+        handled_at = datetime.fromisoformat(row["handled_at"])
+        if before.tzinfo is not None and handled_at.tzinfo is None:
+            handled_at = handled_at.replace(tzinfo=before.tzinfo)
+        return handled_at
+
     def mark_command_processed(
         self,
         chat_identifier: str,
         message_rowid: int,
         command_text: str,
         response_text: str,
+        command_sent_at: datetime | None = None,
     ) -> None:
         with self._connect() as conn:
             conn.execute(
                 """
                 INSERT INTO processed_commands (
-                  chat_identifier, message_rowid, command_text, response_text
-                ) VALUES (?, ?, ?, ?)
+                  chat_identifier, message_rowid, command_sent_at,
+                  command_text, response_text
+                ) VALUES (?, ?, ?, ?, ?)
                 ON CONFLICT(chat_identifier, message_rowid) DO UPDATE SET
+                  command_sent_at = excluded.command_sent_at,
                   command_text = excluded.command_text,
                   response_text = excluded.response_text,
                   processed_at = CURRENT_TIMESTAMP
                 """,
-                (chat_identifier, message_rowid, command_text, response_text),
+                (
+                    chat_identifier,
+                    message_rowid,
+                    command_sent_at.isoformat() if command_sent_at else None,
+                    command_text,
+                    response_text,
+                ),
             )
 
 

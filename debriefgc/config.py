@@ -31,6 +31,7 @@ class Config:
     commands_enabled: bool = True
     command_mention: str = "@debrief"
     command_poll_lookback_minutes: int = 10
+    command_retry_cooldown_minutes: int = 10
     command_default_summary_hours: int = 6
     command_chat_identifiers: tuple[str, ...] = ()
 
@@ -66,6 +67,11 @@ def load_config(path: Path = DEFAULT_CONFIG_PATH) -> Config:
     command_poll_lookback_minutes = int(commands.get("poll_lookback_minutes", 10))
     if command_poll_lookback_minutes < 1:
         raise ValueError("Config [commands].poll_lookback_minutes must be at least 1.")
+    command_retry_cooldown_minutes = int(commands.get("retry_cooldown_minutes", 10))
+    if command_retry_cooldown_minutes < 0:
+        raise ValueError(
+            "Config [commands].retry_cooldown_minutes must be at least 0."
+        )
     command_default_summary_hours = int(commands.get("default_summary_hours", 6))
     if command_default_summary_hours < 1:
         raise ValueError("Config [commands].default_summary_hours must be at least 1.")
@@ -97,6 +103,7 @@ def load_config(path: Path = DEFAULT_CONFIG_PATH) -> Config:
         commands_enabled=bool(commands.get("enabled", True)),
         command_mention=str(commands.get("mention", "@debrief")).strip() or "@debrief",
         command_poll_lookback_minutes=command_poll_lookback_minutes,
+        command_retry_cooldown_minutes=command_retry_cooldown_minutes,
         command_default_summary_hours=command_default_summary_hours,
         command_chat_identifiers=tuple(
             str(item).strip()
@@ -160,6 +167,7 @@ service = "iMessage"
 enabled = true
 mention = "@debrief"
 poll_lookback_minutes = 10
+retry_cooldown_minutes = 10
 default_summary_hours = 6
 
 # Optional. If omitted, DebriefGC watches [group].chat_identifier.

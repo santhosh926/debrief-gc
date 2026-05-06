@@ -156,6 +156,7 @@ ad hoc summary. This is separate from the existing `debriefgc run` daily recap.
 enabled = true
 mention = "@debrief"
 poll_lookback_minutes = 10
+retry_cooldown_minutes = 10
 default_summary_hours = 6
 
 # Optional. If omitted, DebriefGC watches [group].chat_identifier.
@@ -167,6 +168,10 @@ In the chat, send:
 ```text
 @debrief summarize the past 6 hours of this chat
 ```
+
+Valid summary commands receive an immediate `DebriefGC is working...` reply
+before the full summary is generated. Invalid commands receive
+`invalid command: type '@debrief help' for help`.
 
 Then poll once:
 
@@ -181,7 +186,9 @@ debriefgc poll-commands --send
 ```
 
 Processed command message IDs are saved in the local memory database so a
-scheduled poll does not answer the same command twice.
+scheduled poll does not answer the same command twice. The retry cooldown is
+per chat: a second command inside `retry_cooldown_minutes` gets a cooldown
+reply and is remembered instead of generating a summary later.
 
 ## Daily 11:59pm Schedule
 
