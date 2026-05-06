@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, datetime, timedelta
 import tempfile
 from pathlib import Path
 import unittest
@@ -64,33 +64,63 @@ class MemoryTests(unittest.TestCase):
             self.assertTrue(store.has_processed_command("chat-test", 123))
             self.assertFalse(store.has_processed_command("chat-other", 123))
 
-    def test_command_cooldown_ignores_cooldown_responses(self):
+    def test_processed_commands_track_recent_chat_cooldown(self):
+        first_sent_at = datetime(2026, 5, 6, 12, 0)
         with tempfile.TemporaryDirectory() as tmp_dir:
             store = MemoryStore(Path(tmp_dir) / "memory.sqlite3")
             store.mark_command_processed(
                 "chat-test",
                 123,
-                "@debrief summarize the past 6 hours of this chat",
-                "summary response",
-                datetime(2026, 5, 3, 12, 0, tzinfo=timezone.utc),
+                "@debrief summarize",
+                "ok",
+                first_sent_at,
             )
+
+            self.assertTrue(
+                store.has_recent_processed_command(
+                    "chat-test",
+                    first_sent_at + timedelta(minutes=9),
+                    timedelta(minutes=10),
+                )
+            )
+            self.assertFalse(
+                store.has_recent_processed_command(
+                    "chat-test",
+                    first_sent_at + timedelta(minutes=10),
+                    timedelta(minutes=10),
+                )
+            )
+            self.assertFalse(
+                store.has_recent_processed_command(
+                    "chat-other",
+                    first_sent_at + timedelta(minutes=9),
+                    timedelta(minutes=10),
+                )
+            )
+
+    def test_recent_processed_commands_can_ignore_cooldown_replies(self):
+        first_sent_at = datetime(2026, 5, 6, 12, 0)
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            store = MemoryStore(Path(tmp_dir) / "memory.sqlite3")
             store.mark_command_processed(
                 "chat-test",
-                124,
-                "@debrief summarize the past 6 hours of this chat",
-                "DebriefGC can only summarize this chat once every 10 minutes.",
-                datetime(2026, 5, 3, 12, 5, tzinfo=timezone.utc),
-            )
-
-            remaining = store.command_cooldown_remaining(
-                "chat-test",
+                123,
                 "@debrief summarize",
-                ("DebriefGC can only summarize this chat once every ",),
-                timedelta(minutes=10),
-                datetime(2026, 5, 3, 12, 9, tzinfo=timezone.utc),
+                "DebriefGC can only summarize this chat once every 10 minutes. "
+                "Try again in about 5 minutes.",
+                first_sent_at,
             )
 
-        self.assertEqual(remaining, timedelta(minutes=1))
+            self.assertIsNone(
+                store.recent_processed_command_at(
+                    "chat-test",
+                    first_sent_at + timedelta(minutes=6),
+                    timedelta(minutes=10),
+                    ignored_response_prefix=(
+                        "DebriefGC can only summarize this chat once every"
+                    ),
+                )
+            )
 
 
 if __name__ == "__main__":

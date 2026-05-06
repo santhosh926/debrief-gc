@@ -35,9 +35,8 @@ service = "iMessage"
 [commands]
 enabled = true
 mention = "@debrief"
-poll_lookback_minutes = 360
-retry_cooldown_minutes = 5
-invocation_cooldown_minutes = 10
+poll_lookback_minutes = 10
+retry_cooldown_minutes = 10
 default_summary_hours = 6
 
 # Optional. If omitted, DebriefGC watches [group].chat_identifier.

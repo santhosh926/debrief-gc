@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
 import re
-import sys
+from math import ceil
 from zoneinfo import ZoneInfo
 
 from .config import Config
@@ -22,6 +22,12 @@ WINDOW_RE = re.compile(
 COMMAND_COOLDOWN_RESPONSE_PREFIX = (
     "DebriefGC can only summarize this chat once every "
 )
+
+COOLDOWN_RESPONSE_PREFIX = "DebriefGC can only summarize this chat once every"
+INVALID_COMMAND_MESSAGE = "invalid command: type '@debrief help' for help"
+OLD_INVALID_COMMAND_RESPONSE_PREFIX = "DebriefGC couldn't understand that command:"
+HELP_RESPONSE_PREFIX = "DebriefGC supports:"
+WORKING_MESSAGE = "DebriefGC is working..."
 
 
 @dataclass(frozen=True)
@@ -47,6 +53,8 @@ def parse_chat_command(
 
     parts = command_text.split(maxsplit=1)
     command_name = parts[0].lower()
+    if command_name == "help":
+        return ParsedCommand(name=command_name, raw_text=command_text)
     if command_name != "summarize":
         raise ValueError(f'Unsupported command "{parts[0]}".')
 
@@ -103,8 +111,7 @@ def poll_chat_commands(config: Config) -> CommandPollResult:
 
     processed = 0
     skipped = 0
-    failed = 0
-    retry_cooldown = timedelta(minutes=config.command_retry_cooldown_minutes)
+    cooldown = timedelta(minutes=config.command_retry_cooldown_minutes)
     for command_message in command_messages:
         if store.has_processed_command(
             command_message.chat_identifier, command_message.rowid
@@ -112,46 +119,74 @@ def poll_chat_commands(config: Config) -> CommandPollResult:
             skipped += 1
             continue
 
-        if not store.should_retry_command(
-            command_message.chat_identifier,
-            command_message.rowid,
-            retry_cooldown,
-            now,
-        ):
-            skipped += 1
-            continue
-
+        chat_config = config_for_command_chat(config, command_message)
         try:
-            response = build_command_response(config, store, command_message, now)
-            chat_config = config_for_command_chat(config, command_message)
-            send_summary(chat_config, response)
-        except Exception as exc:
-            store.mark_command_failed(
+            parsed = parse_chat_command(
+                command_message.text,
+                mention=config.command_mention,
+                default_summary_hours=config.command_default_summary_hours,
+            )
+        except ValueError:
+            send_summary(chat_config, INVALID_COMMAND_MESSAGE)
+            store.mark_command_processed(
                 command_message.chat_identifier,
                 command_message.rowid,
                 command_message.text,
-                str(exc),
-                now,
+                INVALID_COMMAND_MESSAGE,
+                command_message.sent_at,
             )
-            print(
-                "Command failed: "
-                f"chat={command_message.chat_identifier} "
-                f"rowid={command_message.rowid}: {exc}",
-                file=sys.stderr,
-            )
-            failed += 1
+            processed += 1
             continue
 
+        if parsed.name == "help":
+            response = supported_commands_message(config.command_mention)
+            send_summary(chat_config, response)
+            store.mark_command_processed(
+                command_message.chat_identifier,
+                command_message.rowid,
+                command_message.text,
+                response,
+                command_message.sent_at,
+            )
+            processed += 1
+            continue
+
+        recent_command_at = store.recent_processed_command_at(
+            command_message.chat_identifier,
+            command_message.sent_at,
+            cooldown,
+            ignored_response_prefixes=(
+                COOLDOWN_RESPONSE_PREFIX,
+                INVALID_COMMAND_MESSAGE,
+                OLD_INVALID_COMMAND_RESPONSE_PREFIX,
+                HELP_RESPONSE_PREFIX,
+            ),
+        )
+        if recent_command_at is not None:
+            response = command_cooldown_message(
+                cooldown,
+                recent_command_at + cooldown - command_message.sent_at,
+            )
+            send_summary(chat_config, response)
+            store.mark_command_processed(
+                command_message.chat_identifier,
+                command_message.rowid,
+                command_message.text,
+                response,
+                command_message.sent_at,
+            )
+            skipped += 1
+            continue
+
+        send_summary(chat_config, WORKING_MESSAGE)
+        response = build_command_response(config, store, command_message)
+        send_summary(chat_config, response)
         store.mark_command_processed(
             command_message.chat_identifier,
             command_message.rowid,
             command_message.text,
             response,
-            now,
-        )
-        store.clear_command_failure(
-            command_message.chat_identifier,
-            command_message.rowid,
+            command_message.sent_at,
         )
         processed += 1
 
@@ -214,8 +249,18 @@ def build_command_response(
 
 def supported_commands_message(mention: str) -> str:
     return (
-        "DebriefGC supports: "
-        f"{mention} summarize the past 6 hours of this chat"
+        f"{HELP_RESPONSE_PREFIX} {mention} summarize the past 6 hours of this chat"
+    )
+
+
+def command_cooldown_message(cooldown: timedelta, remaining: timedelta) -> str:
+    cooldown_minutes = max(1, round(cooldown.total_seconds() / 60))
+    remaining_minutes = max(1, ceil(remaining.total_seconds() / 60))
+    cooldown_unit = "minute" if cooldown_minutes == 1 else "minutes"
+    remaining_unit = "minute" if remaining_minutes == 1 else "minutes"
+    return (
+        f"{COOLDOWN_RESPONSE_PREFIX} {cooldown_minutes} {cooldown_unit}. "
+        f"Try again in about {remaining_minutes} {remaining_unit}."
     )
 
 
