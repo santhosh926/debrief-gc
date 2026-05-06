@@ -90,7 +90,7 @@ def main(argv: list[str] | None = None) -> int:
         result = poll_chat_commands(config)
         print(
             f"Command poll complete. Seen {result.seen}, processed "
-            f"{result.processed}, skipped {result.skipped}."
+            f"{result.processed}, skipped {result.skipped}, failed {result.failed}."
         )
         return 0
 

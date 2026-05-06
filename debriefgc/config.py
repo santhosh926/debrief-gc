@@ -64,7 +64,7 @@ def load_config(path: Path = DEFAULT_CONFIG_PATH) -> Config:
         raise ValueError("Config [sending].mode must be either 'dry-run' or 'messages'.")
 
     dry_run = bool(runtime.get("dry_run", send_mode == "dry-run"))
-    command_poll_lookback_minutes = int(commands.get("poll_lookback_minutes", 10))
+    command_poll_lookback_minutes = int(commands.get("poll_lookback_minutes", 360))
     if command_poll_lookback_minutes < 1:
         raise ValueError("Config [commands].poll_lookback_minutes must be at least 1.")
     command_retry_cooldown_minutes = int(commands.get("retry_cooldown_minutes", 10))

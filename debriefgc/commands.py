@@ -19,6 +19,9 @@ WINDOW_RE = re.compile(
     r"(minutes?|mins?|hours?|hrs?|days?)\b",
     re.IGNORECASE,
 )
+COMMAND_COOLDOWN_RESPONSE_PREFIX = (
+    "DebriefGC can only summarize this chat once every "
+)
 
 COOLDOWN_RESPONSE_PREFIX = "DebriefGC can only summarize this chat once every"
 INVALID_COMMAND_MESSAGE = "invalid command: type '@debrief help' for help"
@@ -32,6 +35,7 @@ class CommandPollResult:
     seen: int
     processed: int
     skipped: int
+    failed: int = 0
 
 
 def parse_chat_command(
@@ -41,18 +45,18 @@ def parse_chat_command(
 ) -> ParsedCommand:
     stripped = text.strip()
     if not starts_with_mention(stripped, mention):
-        raise ValueError("Message does not start with the configured mention.")
+        raise ValueError(f"Message must start with {mention}.")
 
     command_text = stripped[len(mention) :].strip()
     if not command_text:
-        raise ValueError("Missing command.")
+        raise ValueError(f"Missing command after {mention}.")
 
     parts = command_text.split(maxsplit=1)
     command_name = parts[0].lower()
     if command_name == "help":
         return ParsedCommand(name=command_name, raw_text=command_text)
     if command_name != "summarize":
-        raise ValueError(f"Unsupported command: {parts[0]}")
+        raise ValueError(f'Unsupported command "{parts[0]}".')
 
     window = parse_summary_window(command_text, default_summary_hours)
     return ParsedCommand(name=command_name, raw_text=command_text, window=window)
@@ -190,6 +194,7 @@ def poll_chat_commands(config: Config) -> CommandPollResult:
         seen=len(command_messages),
         processed=processed,
         skipped=skipped,
+        failed=failed,
     )
 
 
@@ -197,6 +202,7 @@ def build_command_response(
     config: Config,
     store: MemoryStore,
     command_message: ChatCommandMessage,
+    now: datetime | None = None,
 ) -> str:
     chat_config = config_for_command_chat(config, command_message)
     try:
@@ -205,10 +211,23 @@ def build_command_response(
             mention=config.command_mention,
             default_summary_hours=config.command_default_summary_hours,
         )
-    except ValueError:
-        return supported_commands_message(config.command_mention)
+    except ValueError as exc:
+        return invalid_command_message(config.command_mention, str(exc))
 
     if parsed.name == "summarize" and parsed.window is not None:
+        if now is None:
+            now = current_time(config)
+        cooldown = timedelta(minutes=config.command_invocation_cooldown_minutes)
+        cooldown_remaining = store.command_cooldown_remaining(
+            chat_config.chat_identifier,
+            f"{config.command_mention} summarize",
+            (COMMAND_COOLDOWN_RESPONSE_PREFIX,),
+            cooldown,
+            now,
+        )
+        if cooldown_remaining > timedelta(0):
+            return command_cooldown_message(cooldown, cooldown_remaining)
+
         end = command_message.sent_at
         start = end - parsed.window
         messages = fetch_messages_between(
@@ -242,6 +261,27 @@ def command_cooldown_message(cooldown: timedelta, remaining: timedelta) -> str:
     return (
         f"{COOLDOWN_RESPONSE_PREFIX} {cooldown_minutes} {cooldown_unit}. "
         f"Try again in about {remaining_minutes} {remaining_unit}."
+    )
+
+
+def invalid_command_message(mention: str, reason: str) -> str:
+    return (
+        f"DebriefGC couldn't understand that command: {reason}\n\n"
+        f"{supported_commands_message(mention)}\n"
+        "You can change the window with minutes, hours, or days, like: "
+        f"{mention} summarize last 45 minutes"
+    )
+
+
+def command_cooldown_message(cooldown: timedelta, remaining: timedelta) -> str:
+    cooldown_minutes = max(1, int((cooldown.total_seconds() + 59) // 60))
+    minutes = max(1, int((remaining.total_seconds() + 59) // 60))
+    cooldown_plural = "" if cooldown_minutes == 1 else "s"
+    plural = "" if minutes == 1 else "s"
+    return (
+        f"{COMMAND_COOLDOWN_RESPONSE_PREFIX}{cooldown_minutes} "
+        f"minute{cooldown_plural}. "
+        f"Try again in about {minutes} minute{plural}."
     )
 
 

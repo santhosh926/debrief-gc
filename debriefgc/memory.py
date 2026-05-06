@@ -44,6 +44,21 @@ CREATE TABLE IF NOT EXISTS processed_commands (
 
 CREATE INDEX IF NOT EXISTS idx_processed_commands_chat_message
 ON processed_commands(chat_identifier, message_rowid);
+
+CREATE TABLE IF NOT EXISTS command_failures (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  chat_identifier TEXT NOT NULL,
+  message_rowid INTEGER NOT NULL,
+  command_text TEXT NOT NULL,
+  error_text TEXT NOT NULL,
+  attempts INTEGER NOT NULL DEFAULT 1,
+  first_failed_at TEXT NOT NULL,
+  last_failed_at TEXT NOT NULL,
+  UNIQUE(chat_identifier, message_rowid)
+);
+
+CREATE INDEX IF NOT EXISTS idx_command_failures_chat_message
+ON command_failures(chat_identifier, message_rowid);
 """
 
 
@@ -241,6 +256,7 @@ class MemoryStore:
         response_text: str,
         command_sent_at: datetime | None = None,
     ) -> None:
+        timestamp = format_utc_timestamp(processed_at) if processed_at else None
         with self._connect() as conn:
             conn.execute(
                 """
@@ -252,7 +268,7 @@ class MemoryStore:
                   command_sent_at = excluded.command_sent_at,
                   command_text = excluded.command_text,
                   response_text = excluded.response_text,
-                  processed_at = CURRENT_TIMESTAMP
+                  processed_at = excluded.processed_at
                 """,
                 (
                     chat_identifier,
@@ -262,6 +278,133 @@ class MemoryStore:
                     response_text,
                 ),
             )
+
+    def command_cooldown_remaining(
+        self,
+        chat_identifier: str,
+        command_text_prefix: str,
+        ignored_response_prefixes: tuple[str, ...],
+        cooldown: timedelta,
+        now: datetime,
+    ) -> timedelta:
+        normalized_prefix = command_text_prefix.strip().lower()
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT command_text, response_text, processed_at
+                FROM processed_commands
+                WHERE chat_identifier = ?
+                ORDER BY processed_at DESC
+                LIMIT 50
+                """,
+                (chat_identifier,),
+            ).fetchall()
+        for row in rows:
+            command_text = str(row["command_text"]).strip().lower()
+            if not command_text.startswith(normalized_prefix):
+                continue
+            response_text = str(row["response_text"])
+            if any(
+                response_text.startswith(prefix)
+                for prefix in ignored_response_prefixes
+            ):
+                continue
+
+            last_processed_at = parse_stored_timestamp(row["processed_at"])
+            elapsed = utc_datetime(now) - last_processed_at
+            remaining = cooldown - elapsed
+            if remaining <= timedelta(0):
+                return timedelta(0)
+            return remaining
+        return timedelta(0)
+
+    def should_retry_command(
+        self,
+        chat_identifier: str,
+        message_rowid: int,
+        cooldown: timedelta,
+        now: datetime,
+    ) -> bool:
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                SELECT last_failed_at
+                FROM command_failures
+                WHERE chat_identifier = ?
+                  AND message_rowid = ?
+                LIMIT 1
+                """,
+                (chat_identifier, message_rowid),
+            ).fetchone()
+        if row is None:
+            return True
+
+        last_failed_at = datetime.fromisoformat(row["last_failed_at"])
+        if last_failed_at.tzinfo is None:
+            last_failed_at = last_failed_at.replace(tzinfo=timezone.utc)
+        if now.tzinfo is None:
+            now = now.astimezone()
+        return now.astimezone(timezone.utc) - last_failed_at >= cooldown
+
+    def mark_command_failed(
+        self,
+        chat_identifier: str,
+        message_rowid: int,
+        command_text: str,
+        error_text: str,
+        failed_at: datetime,
+    ) -> None:
+        timestamp = format_utc_timestamp(failed_at)
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO command_failures (
+                  chat_identifier, message_rowid, command_text, error_text,
+                  first_failed_at, last_failed_at
+                ) VALUES (?, ?, ?, ?, ?, ?)
+                ON CONFLICT(chat_identifier, message_rowid) DO UPDATE SET
+                  command_text = excluded.command_text,
+                  error_text = excluded.error_text,
+                  attempts = attempts + 1,
+                  last_failed_at = excluded.last_failed_at
+                """,
+                (
+                    chat_identifier,
+                    message_rowid,
+                    command_text,
+                    error_text,
+                    timestamp,
+                    timestamp,
+                ),
+            )
+
+    def clear_command_failure(self, chat_identifier: str, message_rowid: int) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                """
+                DELETE FROM command_failures
+                WHERE chat_identifier = ?
+                  AND message_rowid = ?
+                """,
+                (chat_identifier, message_rowid),
+            )
+
+
+def utc_datetime(value: datetime) -> datetime:
+    if value.tzinfo is None:
+        value = value.astimezone()
+    return value.astimezone(timezone.utc)
+
+
+def format_utc_timestamp(value: datetime) -> str:
+    return utc_datetime(value).isoformat(timespec="seconds")
+
+
+def parse_stored_timestamp(value: str) -> datetime:
+    parsed = datetime.fromisoformat(value)
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
 
 
 def summary_from_row(row: sqlite3.Row) -> DailySummary:
